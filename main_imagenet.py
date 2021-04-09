@@ -87,9 +87,10 @@ def main():
     # fred:
     args.pretrained = True
     args.multiprocessing_distributed = False
-    args.gpu = 0
+    # args.gpu = 0
     args.data = '/scratch/PI/eepatrick/imagenet/'
-    args.resume = '/home/zhongad/PycharmProjects/SignedFixedPointAlignment/slurm/model_best2.pth.tar'
+    args.resume = './slurm/checkpoint2.pth.tar'
+    args.cos_annl_lr_scheduler = True
 
     if args.seed is not None:
         random.seed(args.seed)
@@ -254,40 +255,47 @@ def main_worker(gpu, ngpus_per_node, args):
         validate(val_loader, model, criterion, args)
         return
 
-    with torch.cuda.device(0):
-        macs, params = get_model_complexity_info(model, (3, 227, 227), as_strings=True, print_per_layer_stat=True,
-                                                 verbose=True)
-        print('{:<30}  {:<8}'.format('Computational complexity: ', macs))
-        print('{:<30}  {:<8}'.format('Number of parameters: ', params))
-    summary(model, input_size=(3, 227, 227), device='cpu')
+    if args.cos_annl_lr_scheduler:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
 
-    # for epoch in range(args.start_epoch, args.epochs):
-    #     if args.distributed:
-    #         train_sampler.set_epoch(epoch)
-    #     adjust_learning_rate(optimizer, epoch, args)
-    #
-    #     localtime = time.localtime(time.time())
-    #     print('fred: Now is {}d-{}h-{}m-{}s'.format(localtime.tm_mday, localtime.tm_hour, localtime.tm_min,
-    #                                       localtime.tm_sec))
-    #     # train for one epoch
-    #     train(train_loader, model, criterion, optimizer, epoch, args)
-    #
-    #     # evaluate on validation set
-    #     acc1 = validate(val_loader, model, criterion, args)
-    #
-    #     # remember best acc@1 and save checkpoint
-    #     is_best = acc1 > best_acc1
-    #     best_acc1 = max(acc1, best_acc1)
-    #
-    #     if not args.multiprocessing_distributed or (args.multiprocessing_distributed
-    #                                                 and args.rank % ngpus_per_node == 0):
-    #         save_checkpoint({
-    #             'epoch': epoch + 1,
-    #             'arch': args.arch,
-    #             'state_dict': model.state_dict(),
-    #             'best_acc1': best_acc1,
-    #             'optimizer': optimizer.state_dict(),
-    #         }, is_best)
+    # with torch.cuda.device(0):
+    #     macs, params = get_model_complexity_info(model, (3, 227, 227), as_strings=True, print_per_layer_stat=True,
+    #                                              verbose=True)
+    #     print('{:<30}  {:<8}'.format('Computational complexity: ', macs))
+    #     print('{:<30}  {:<8}'.format('Number of parameters: ', params))
+    # summary(model, input_size=(3, 227, 227), device='cpu')
+
+    for epoch in range(args.start_epoch, args.epochs):
+        if args.distributed:
+            train_sampler.set_epoch(epoch)
+        adjust_learning_rate(optimizer, epoch, args)
+
+        localtime = time.localtime(time.time())
+        print('fred: Now is {}d-{}h-{}m-{}s'.format(localtime.tm_mday, localtime.tm_hour, localtime.tm_min,
+                                          localtime.tm_sec))
+        # train for one epoch
+        train(train_loader, model, criterion, optimizer, epoch, args)
+
+        # step the scheduler
+        if args.cos_annl_lr_scheduler:
+            scheduler.step()
+
+        # evaluate on validation set
+        acc1 = validate(val_loader, model, criterion, args)
+
+        # remember best acc@1 and save checkpoint
+        is_best = acc1 > best_acc1
+        best_acc1 = max(acc1, best_acc1)
+
+        if not args.multiprocessing_distributed or (args.multiprocessing_distributed
+                                                    and args.rank % ngpus_per_node == 0):
+            save_checkpoint({
+                'epoch': epoch + 1,
+                'arch': args.arch,
+                'state_dict': model.state_dict(),
+                'best_acc1': best_acc1,
+                'optimizer': optimizer.state_dict(),
+            }, is_best)
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):

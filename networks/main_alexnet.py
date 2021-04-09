@@ -14,6 +14,7 @@ import torch.utils.data.distributed
 # import torchvision.transforms as transforms
 # import torchvision.datasets as datasets
 import model_list
+from torchsummary import summary
 
 # set the seed
 torch.manual_seed(1)
@@ -21,15 +22,17 @@ torch.cuda.manual_seed(1)
 
 import sys
 import gc
+
 cwd = os.getcwd()
-sys.path.append(cwd+'/../')
+sys.path.append(cwd + '/../')
 import datasets as datasets
 import datasets.transforms as transforms
+from ptflops import get_model_complexity_info
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('--arch', '-a', metavar='ARCH', default='alexnet',
                     help='model architecture (default: alexnet)')
-parser.add_argument('--data', metavar='DATA_PATH', default='./data/',
+parser.add_argument('--data', metavar='DATA_PATH', default='/scratch/PI/eepatrick/imagenet/',
                     help='path to imagenet data (default: ./data/)')
 parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
                     help='number of data loading workers (default: 8)')
@@ -74,7 +77,7 @@ def main():
                                 world_size=args.world_size)
 
     # create model
-    if args.arch=='alexnet':
+    if args.arch == 'alexnet':
         model = model_list.alexnet(pretrained=args.pretrained)
         input_size = 227
     else:
@@ -113,72 +116,79 @@ def main():
 
     cudnn.benchmark = True
 
-    # Data loading code
-    if not os.path.exists(args.data+'/imagenet_mean.binaryproto'):
-        print("==> Data directory"+args.data+"does not exits")
-        print("==> Please specify the correct data path by")
-        print("==>     --data <DATA_PATH>")
-        return
+    # # Data loading code
+    # if not os.path.exists(args.data + '/imagenet_mean.binaryproto'):
+    #     print("==> Data directory" + args.data + "does not exits")
+    #     print("==> Please specify the correct data path by")
+    #     print("==>     --data <DATA_PATH>")
+    #     return
+    #
+    # normalize = transforms.Normalize(
+    #     meanfile=args.data + '/imagenet_mean.binaryproto')
 
-    normalize = transforms.Normalize(
-            meanfile=args.data+'/imagenet_mean.binaryproto')
+    # train_dataset = datasets.ImageFolder(
+    #     args.data,
+    #     transforms.Compose([
+    #         transforms.RandomHorizontalFlip(),
+    #         transforms.ToTensor(),
+    #         # normalize,
+    #         transforms.RandomSizedCrop(input_size),
+    #     ]),
+    #     Train=True)
+    #
+    # if args.distributed:
+    #     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+    # else:
+    #     train_sampler = None
+    #
+    # train_loader = torch.utils.data.DataLoader(
+    #     train_dataset, batch_size=args.batch_size, shuffle=False,
+    #     num_workers=args.workers, pin_memory=True, sampler=train_sampler)
+    #
+    # val_loader = torch.utils.data.DataLoader(
+    #     datasets.ImageFolder(args.data, transforms.Compose([
+    #         transforms.ToTensor(),
+    #         # normalize,
+    #         transforms.CenterCrop(input_size),
+    #     ]),
+    #                          Train=False),
+    #     batch_size=args.batch_size, shuffle=False,
+    #     num_workers=args.workers, pin_memory=True)
+    #
+    # # print model
+    #
+    # if args.evaluate:
+    #     validate(val_loader, model, criterion)
+    #     return
 
-    train_dataset = datasets.ImageFolder(
-        args.data,
-        transforms.Compose([
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize,
-            transforms.RandomSizedCrop(input_size),
-        ]),
-        Train=True)
+    # for epoch in range(args.start_epoch, args.epochs):
+    #     if args.distributed:
+    #         train_sampler.set_epoch(epoch)
+    #     adjust_learning_rate(optimizer, epoch)
+    #
+    #     # train for one epoch
+    #     train(train_loader, model, criterion, optimizer, epoch)
+    #
+    #     # evaluate on validation set
+    #     prec1 = validate(val_loader, model, criterion)
+    #
+    #     # remember best prec@1 and save checkpoint
+    #     is_best = prec1 > best_prec1
+    #     best_prec1 = max(prec1, best_prec1)
+    #     save_checkpoint({
+    #         'epoch': epoch + 1,
+    #         'arch': args.arch,
+    #         'state_dict': model.state_dict(),
+    #         'best_prec1': best_prec1,
+    #         'optimizer': optimizer.state_dict(),
+    #     }, is_best)
 
-    if args.distributed:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-    else:
-        train_sampler = None
-
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=False,
-        num_workers=args.workers, pin_memory=True, sampler=train_sampler)
-
-    val_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(args.data, transforms.Compose([
-            transforms.ToTensor(),
-            normalize,
-            transforms.CenterCrop(input_size),
-        ]),
-        Train=False),
-        batch_size=args.batch_size, shuffle=False,
-        num_workers=args.workers, pin_memory=True)
-
-    print model
-
-    if args.evaluate:
-        validate(val_loader, model, criterion)
-        return
-
-    for epoch in range(args.start_epoch, args.epochs):
-        if args.distributed:
-            train_sampler.set_epoch(epoch)
-        adjust_learning_rate(optimizer, epoch)
-
-        # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch)
-
-        # evaluate on validation set
-        prec1 = validate(val_loader, model, criterion)
-
-        # remember best prec@1 and save checkpoint
-        is_best = prec1 > best_prec1
-        best_prec1 = max(prec1, best_prec1)
-        save_checkpoint({
-            'epoch': epoch + 1,
-            'arch': args.arch,
-            'state_dict': model.state_dict(),
-            'best_prec1': best_prec1,
-            'optimizer' : optimizer.state_dict(),
-        }, is_best)
+    with torch.cuda.device(0):
+        macs, params = get_model_complexity_info(model, (3, 227, 227), as_strings=True, print_per_layer_stat=True,
+                                                 verbose=True)
+        print('{:<30}  {:<8}'.format('Computational complexity: ', macs))
+        print('{:<30}  {:<8}'.format('Number of parameters: ', params))
+    summary(model, input_size=(3, 227, 227), device='cpu')
 
 
 def train(train_loader, model, criterion, optimizer, epoch):
@@ -226,8 +236,8 @@ def train(train_loader, model, criterion, optimizer, epoch):
                   'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
                   'Prec@5 {top5.val:.3f} ({top5.avg:.3f})'.format(
-                   epoch, i, len(train_loader), batch_time=batch_time,
-                   data_time=data_time, loss=losses, top1=top1, top5=top5))
+                epoch, i, len(train_loader), batch_time=batch_time,
+                data_time=data_time, loss=losses, top1=top1, top5=top5))
         gc.collect()
 
 
@@ -266,8 +276,8 @@ def validate(val_loader, model, criterion):
                   'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
                   'Prec@5 {top5.val:.3f} ({top5.avg:.3f})'.format(
-                   i, len(val_loader), batch_time=batch_time, loss=losses,
-                   top1=top1, top5=top5))
+                i, len(val_loader), batch_time=batch_time, loss=losses,
+                top1=top1, top5=top5))
 
     print(' * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f}'
           .format(top1=top1, top5=top5))
@@ -283,6 +293,7 @@ def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
+
     def __init__(self):
         self.reset()
 
@@ -302,7 +313,7 @@ class AverageMeter(object):
 def adjust_learning_rate(optimizer, epoch):
     """Sets the learning rate to the initial LR decayed by 10 every 40 epochs"""
     lr = args.lr * (0.1 ** (epoch // 40))
-    print 'Learning rate:', lr
+    # print 'Learning rate:', lr
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
