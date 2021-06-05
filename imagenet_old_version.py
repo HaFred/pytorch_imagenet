@@ -25,7 +25,7 @@ parser.add_argument('-data', metavar='DIR', default='/scratch/PI/eepatrick/image
                     help='path to dataset')
 parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet18',
                     choices=model_names,
-                    help='model architecture: ' +
+                    help='modelssss architecture: ' +
                         ' | '.join(model_names) +
                         ' (default: resnet18)')
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
@@ -47,9 +47,9 @@ parser.add_argument('--print-freq', '-p', default=10, type=int,
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
-                    help='evaluate model on validation set')
+                    help='evaluate modelssss on validation set')
 parser.add_argument('--pretrained', dest='pretrained', action='store_true',
-                    help='use pre-trained model')
+                    help='use pre-trained modelssss')
 
 best_prec1 = 0
 
@@ -58,12 +58,12 @@ def main():
     global args, best_prec1
     args = parser.parse_args()
 
-    # create model
+    # create modelssss
     if args.pretrained:
-        print("=> using pre-trained model '{}'".format(args.arch))
+        print("=> using pre-trained modelssss '{}'".format(args.arch))
         model = models.__dict__[args.arch](pretrained=True)
     else:
-        print("=> creating model '{}'".format(args.arch))
+        print("=> creating modelssss '{}'".format(args.arch))
         model = models.__dict__[args.arch]()
 
     if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):

@@ -1,6 +1,17 @@
+## Fred's update
+For BP, 180 epochs training, 
+* ResNet-18 reaches 70.782% top1 accuracy.
+* AlexNet reaches ...
+
+For Efficient-Grad, 180 epochs training,
+* ResNet-18
+* AlexNet 
+
+
+## Original
 The implementation of AlexNet in [PyTorch Vision](https://github.com/pytorch/vision) is not actually the ordinary version. In this case, this repository reimplements some of the networks for the author's usage.
 
-# Pre-requirements
+## Pre-requirements
 - [Caffe](https://github.com/BVLC/caffe)
 - [PyTorch](https://github.com/pytorch/pytorch)
 

@@ -73,11 +73,11 @@ class AlexNet(nn.Module):
 
 
 def alexnet(pretrained=False, **kwargs):
-    r"""AlexNet model architecture from the
+    r"""AlexNet modelssss architecture from the
     `"One weird trick..." <https://arxiv.org/abs/1404.5997>`_ paper.
 
     Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
+        pretrained (bool): If True, returns a modelssss pre-trained on ImageNet
     """
     model = AlexNet(**kwargs)
     if pretrained:

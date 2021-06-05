@@ -17,10 +17,13 @@ import torch.utils.data.distributed
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
-from ptflops import get_model_complexity_info
-from torchsummary import summary
+import model as self_model
+import logging
 
-sys.path.append('/home/zhongad/PycharmProjects/pytorch_imagenet/')
+# from ptflops import get_model_complexity_info
+# from torchsummary import summary
+
+# sys.path.append('/home/zhongad/PycharmProjects/pytorch_imagenet/')
 
 model_names = sorted(name for name in models.__dict__
                      if name.islower() and not name.startswith("__")
@@ -29,14 +32,15 @@ model_names = sorted(name for name in models.__dict__
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('-data', metavar='DIR',
                     help='path to dataset')
-parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet18',
-                    choices=model_names,
-                    help='model architecture: ' +
+parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet18',  # 'resnet18' lower letter for torch defined,
+                    # 'ResNet18' upper letter for self defined model for EG,
+                    # choices=model_names,
+                    help='models architecture: ' +
                          ' | '.join(model_names) +
                          ' (default: resnet18)')
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
-parser.add_argument('--epochs', default=100, type=int, metavar='N',
+parser.add_argument('--epochs', default=180, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
@@ -57,9 +61,9 @@ parser.add_argument('-p', '--print-freq', default=10, type=int,
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
-                    help='evaluate model on validation set')
+                    help='evaluate models on validation set')
 parser.add_argument('--pretrained', dest='pretrained', action='store_true',
-                    help='use pre-trained model')
+                    help='use pre-trained models')
 parser.add_argument('--world-size', default=1, type=int,
                     help='number of nodes for distributed training')
 parser.add_argument('--rank', default=0, type=int,
@@ -77,6 +81,8 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
                          'N processes per node, which has N GPUs. This is the '
                          'fastest way to use PyTorch for either single node or '
                          'multi node data parallel training')
+parser.add_argument('--checkpoint_save_path', default='.', type=str)
+parser.add_argument('--folder_name', default='./eg_new', type=str)
 
 best_acc1 = 0
 
@@ -85,12 +91,25 @@ def main():
     args = parser.parse_args()
 
     # fred:
-    args.pretrained = True
+    args.pretrained = False
     args.multiprocessing_distributed = False
     # args.gpu = 0
-    args.data = '/scratch/PI/eepatrick/imagenet/'
-    args.resume = './slurm/checkpoint2.pth.tar'
+    args.data = '/home/zhongad/Downloads/imagenet/'
+    # args.resume = './mrmh_bp_resnet18/checkpoint.pth.tar'
     args.cos_annl_lr_scheduler = True
+    args.checkpoint_save_path = 'eg_new'
+
+    # Logging
+    if not os.path.exists('logging'):
+        os.makedirs('logging')
+    localtime = time.localtime(time.time())
+    time_str = str(localtime.tm_mon) + '_' + str(localtime.tm_mday) + '_' + str(localtime.tm_hour) + '_' + str(
+        localtime.tm_min)
+    logging.basicConfig(level=logging.INFO,
+                        format='%(asctime)s %(name)s-%(levelname)s: %(message)s',
+                        datefmt='%m-%d %H:%M:%S',
+                        filename='./logging/' + time_str + '_lr' + format(args.lr, '.0e') + '_log.txt',
+                        filemode='w')
 
     if args.seed is not None:
         random.seed(args.seed)
@@ -101,6 +120,9 @@ def main():
                       'which can slow down your training considerably! '
                       'You may see unexpected behavior when restarting '
                       'from checkpoints.')
+
+    if not os.path.exists("./" + args.checkpoint_save_path):
+        os.system("mkdir ./" + args.checkpoint_save_path)
 
     if args.gpu is not None:
         warnings.warn('You have chosen a specific GPU. This will completely '
@@ -147,12 +169,18 @@ def main_worker(gpu, ngpus_per_node, args):
         os.environ["MASTER_PORT"] = "29595"
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                 world_size=args.world_size, rank=args.rank)
-    # create model
+    # create models
     if args.pretrained:
-        print("=> using pre-trained model '{}'".format(args.arch))
+        print("=> using pre-trained models '{}'".format(args.arch))
         model = models.__dict__[args.arch](pretrained=True)
+    elif args.arch == 'ResNet18':
+        model = self_model.ResNet18(conv_act='relu',
+                                    train_mode_conv='Sign_symmetry_magnitude_uniform',
+                                    train_mode_fc='Sign_symmetry_magnitude_uniform',
+                                    prune_flag='StochasticFA', prune_percent=0,
+                                    angle_measurement=False)
     else:
-        print("=> creating model '{}'".format(args.arch))
+        print("=> creating models '{}'".format(args.arch))
         model = models.__dict__[args.arch]()
 
     if not torch.cuda.is_available():
@@ -200,7 +228,7 @@ def main_worker(gpu, ngpus_per_node, args):
             if args.gpu is None:
                 checkpoint = torch.load(args.resume)
             else:
-                # Map model to be loaded to specified single gpu.
+                # Map models to be loaded to specified single gpu.
                 loc = 'cuda:{}'.format(args.gpu)
                 checkpoint = torch.load(args.resume, map_location=loc)
             args.start_epoch = checkpoint['epoch']
@@ -259,11 +287,11 @@ def main_worker(gpu, ngpus_per_node, args):
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
 
     # with torch.cuda.device(0):
-    #     macs, params = get_model_complexity_info(model, (3, 227, 227), as_strings=True, print_per_layer_stat=True,
+    #     macs, params = get_model_complexity_info(models, (3, 227, 227), as_strings=True, print_per_layer_stat=True,
     #                                              verbose=True)
     #     print('{:<30}  {:<8}'.format('Computational complexity: ', macs))
     #     print('{:<30}  {:<8}'.format('Number of parameters: ', params))
-    # summary(model, input_size=(3, 227, 227), device='cpu')
+    # summary(models, input_size=(3, 227, 227), device='cpu')
 
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
@@ -272,7 +300,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
         localtime = time.localtime(time.time())
         print('fred: Now is {}d-{}h-{}m-{}s'.format(localtime.tm_mday, localtime.tm_hour, localtime.tm_min,
-                                          localtime.tm_sec))
+                                                    localtime.tm_sec))
         # train for one epoch
         train(train_loader, model, criterion, optimizer, epoch, args)
 
@@ -295,7 +323,7 @@ def main_worker(gpu, ngpus_per_node, args):
                 'state_dict': model.state_dict(),
                 'best_acc1': best_acc1,
                 'optimizer': optimizer.state_dict(),
-            }, is_best)
+            }, is_best, foldername=args.folder_name)
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
@@ -391,10 +419,12 @@ def validate(val_loader, model, criterion, args):
     return top1.avg
 
 
-def save_checkpoint(state, is_best, filename='./slurm/checkpoint2.pth.tar'):
+def save_checkpoint(state, is_best, foldername='./mrmh_bp_resnet18/checkpoint.pth.tar'):
+    filename = foldername + '/checkpoint.pth.tar'
     torch.save(state, filename)
     if is_best:
-        shutil.copyfile(filename, './slurm/model_best2.pth.tar')
+        # shutil.copyfile(filename, './mrmh_bp_resnet18/model_best.pth.tar')
+        shutil.copyfile(filename, foldername + '/model_best.pth.tar')
 
 
 class AverageMeter(object):
@@ -431,7 +461,8 @@ class ProgressMeter(object):
     def display(self, batch):
         entries = [self.prefix + self.batch_fmtstr.format(batch)]
         entries += [str(meter) for meter in self.meters]
-        print('\t'.join(entries))
+        # print('\t'.join(entries))
+        logging.info('\t'.join(entries))
 
     def _get_batch_fmtstr(self, num_batches):
         num_digits = len(str(num_batches // 1))

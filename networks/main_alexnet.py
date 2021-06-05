@@ -31,7 +31,7 @@ from ptflops import get_model_complexity_info
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('--arch', '-a', metavar='ARCH', default='alexnet',
-                    help='model architecture (default: alexnet)')
+                    help='modelssss architecture (default: alexnet)')
 parser.add_argument('--data', metavar='DATA_PATH', default='/scratch/PI/eepatrick/imagenet/',
                     help='path to imagenet data (default: ./data/)')
 parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
@@ -53,9 +53,9 @@ parser.add_argument('--print-freq', '-p', default=10, type=int,
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
-                    help='evaluate model on validation set')
+                    help='evaluate modelssss on validation set')
 parser.add_argument('--pretrained', dest='pretrained', action='store_true',
-                    default=False, help='use pre-trained model')
+                    default=False, help='use pre-trained modelssss')
 parser.add_argument('--world-size', default=1, type=int,
                     help='number of distributed processes')
 parser.add_argument('--dist-url', default='tcp://224.66.41.62:23456', type=str,
@@ -76,7 +76,7 @@ def main():
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                 world_size=args.world_size)
 
-    # create model
+    # create modelssss
     if args.arch == 'alexnet':
         model = model_list.alexnet(pretrained=args.pretrained)
         input_size = 227
@@ -155,10 +155,10 @@ def main():
     #     batch_size=args.batch_size, shuffle=False,
     #     num_workers=args.workers, pin_memory=True)
     #
-    # # print model
+    # # print modelssss
     #
     # if args.evaluate:
-    #     validate(val_loader, model, criterion)
+    #     validate(val_loader, modelssss, criterion)
     #     return
 
     # for epoch in range(args.start_epoch, args.epochs):
@@ -167,10 +167,10 @@ def main():
     #     adjust_learning_rate(optimizer, epoch)
     #
     #     # train for one epoch
-    #     train(train_loader, model, criterion, optimizer, epoch)
+    #     train(train_loader, modelssss, criterion, optimizer, epoch)
     #
     #     # evaluate on validation set
-    #     prec1 = validate(val_loader, model, criterion)
+    #     prec1 = validate(val_loader, modelssss, criterion)
     #
     #     # remember best prec@1 and save checkpoint
     #     is_best = prec1 > best_prec1
@@ -178,7 +178,7 @@ def main():
     #     save_checkpoint({
     #         'epoch': epoch + 1,
     #         'arch': args.arch,
-    #         'state_dict': model.state_dict(),
+    #         'state_dict': modelssss.state_dict(),
     #         'best_prec1': best_prec1,
     #         'optimizer': optimizer.state_dict(),
     #     }, is_best)
