@@ -38,10 +38,10 @@ class BasicBlock(nn.Module):
 
     def forward(self, x):
         if self.conv_act == 'relu':
-            out = torch.relu(self.bn1(self.conv1(x)))
-            out = self.bn2(self.conv2(out))
-            out += self.shortcut(x)
-            out = torch.relu(out)
+            out = checkpoint(torch.relu(self.bn1(self.conv1(x))))
+            out = checkpoint(self.bn2(self.conv2(out)))
+            out += checkpoint(self.shortcut(x))
+            out = checkpoint(torch.relu(out))
         elif self.conv_act == 'tanh':
             out = torch.tanh(self.bn1(self.conv1(x)))
             out = self.bn2(self.conv2(out))
@@ -111,14 +111,14 @@ class ResNet(nn.Module):
 
     def forward(self, x):
         if self.conv_act == 'relu':
-            out = torch.relu(self.layer0(x))
-            out = self.layer1(out)
-            out = self.layer2(out)
-            out = self.layer3(out)
-            out = self.layer4(out)
-            out = F.avg_pool2d(out, 4)
-            out = out.view(out.size(0), -1)
-            out = self.linear(out)
+            out = checkpoint(torch.relu(self.layer0(x)))
+            out = checkpoint(self.layer1(out))
+            out = checkpoint(self.layer2(out))
+            out = checkpoint(self.layer3(out))
+            out = checkpoint(self.layer4(out))
+            out = checkpoint(F.avg_pool2d(out, 4))
+            out = checkpoint(out.view(out.size(0), -1))
+            out = checkpoint(self.linear(out))
         elif self.conv_act == 'tanh':
             out = torch.tanh(self.layer0(x))
             out = self.layer1(out)

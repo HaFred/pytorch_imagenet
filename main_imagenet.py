@@ -19,8 +19,13 @@ import torchvision.datasets as datasets
 import torchvision.models as models
 import model as self_model
 import logging
+import numpy as np
+import pandas as pd
+from model.resnet import *
+from model.alexnet import *
 
-# from ptflops import get_model_complexity_info
+
+from ptflops import get_model_complexity_info
 # from torchsummary import summary
 
 # sys.path.append('/home/zhongad/PycharmProjects/pytorch_imagenet/')
@@ -49,9 +54,10 @@ parser.add_argument('-b', '--batch-size', default=256, type=int,
                     help='mini-batch size (default: 256), this is the total '
                          'batch size of all GPUs on the current node when '
                          'using Data Parallel or Distributed Data Parallel')
+# note here if batch != 256 due to memory limits, the lr should decrease along with to avoid jump over optimum
 parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
-parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
+parser.add_argument('--momentum', default=0.7, type=float, metavar='M',
                     help='momentum')
 parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
                     metavar='W', help='weight decay (default: 1e-4)',
@@ -83,6 +89,8 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
                          'multi node data parallel training')
 parser.add_argument('--checkpoint_save_path', default='.', type=str)
 parser.add_argument('--folder_name', default='./eg_new', type=str)
+parser.add_argument('-prune_rate', type=str, default='0')
+parser.add_argument('-zero_grad_mea', type=bool, default=True)
 
 best_acc1 = 0
 
@@ -95,7 +103,7 @@ def main():
     args.multiprocessing_distributed = False
     # args.gpu = 0
     args.data = '/home/zhongad/Downloads/imagenet/'
-    # args.resume = './mrmh_bp_resnet18/checkpoint.pth.tar'
+    args.resume = './eg_new/' + args.arch + '_checkpoint.pth.tar'
     args.cos_annl_lr_scheduler = True
     args.checkpoint_save_path = 'eg_new'
 
@@ -108,8 +116,21 @@ def main():
     logging.basicConfig(level=logging.INFO,
                         format='%(asctime)s %(name)s-%(levelname)s: %(message)s',
                         datefmt='%m-%d %H:%M:%S',
-                        filename='./logging/' + time_str + '_lr' + format(args.lr, '.0e') + '_log.txt',
+                        filename='./logging/' + args.arch + '_' + time_str +
+                                 '_lr' + format(args.lr, '.0e') + '_log.txt',
                         filemode='w')
+    # define a Handler which writes INFO messages or higher to the sys.stderr
+    console = logging.StreamHandler(stream=sys.stdout)
+    console.setLevel(logging.INFO)  # if as INFO will make the console at INFO level thus no additional stdout
+    # set a format which is simpler for console use
+    formatter = logging.Formatter('%(name)s-%(levelname)s: %(message)s')
+    # tell the handler to use this format
+    console.setFormatter(formatter)
+    # add the handler to the root logger
+    logger = logging.getLogger()
+    logger.addHandler(console)
+    logging.info('Arguments:')
+    logging.info(args.__dict__)
 
     if args.seed is not None:
         random.seed(args.seed)
@@ -145,16 +166,17 @@ def main():
         mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
     else:
         # Simply call main_worker function
-        main_worker(args.gpu, ngpus_per_node, args)
+        main_worker(args.gpu, ngpus_per_node, time_str, args)
 
 
-def main_worker(gpu, ngpus_per_node, args):
+def main_worker(gpu, ngpus_per_node, time_str, args):
     global best_acc1
     args.gpu = gpu
+    prune_rate = float(args.prune_rate)
 
     if args.gpu is not None:
         print("Use GPU: {} for training".format(args.gpu))
-
+        torch.cuda.empty_cache()
     if args.distributed:
         if args.dist_url == "env://" and args.rank == -1:
             args.rank = int(os.environ["RANK"])
@@ -177,8 +199,13 @@ def main_worker(gpu, ngpus_per_node, args):
         model = self_model.ResNet18(conv_act='relu',
                                     train_mode_conv='Sign_symmetry_magnitude_uniform',
                                     train_mode_fc='Sign_symmetry_magnitude_uniform',
-                                    prune_flag='StochasticFA', prune_percent=0,
+                                    prune_flag='StochasticFA', prune_percent=prune_rate,
                                     angle_measurement=False)
+    elif args.arch == 'AlexNet':
+        model = self_model.AlexNet_SFA(train_mode_conv='Sign_symmetry_magnitude_uniform',
+                                       train_mode_fc='Sign_symmetry_magnitude_uniform',
+                                       prune_rate=prune_rate,
+                                       angle_measurement=False)
     else:
         print("=> creating models '{}'".format(args.arch))
         model = models.__dict__[args.arch]()
@@ -286,13 +313,18 @@ def main_worker(gpu, ngpus_per_node, args):
     if args.cos_annl_lr_scheduler:
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
 
-    # with torch.cuda.device(0):
-    #     macs, params = get_model_complexity_info(models, (3, 227, 227), as_strings=True, print_per_layer_stat=True,
-    #                                              verbose=True)
-    #     print('{:<30}  {:<8}'.format('Computational complexity: ', macs))
-    #     print('{:<30}  {:<8}'.format('Number of parameters: ', params))
+    with torch.cuda.device(0):
+        macs, params = get_model_complexity_info(model, (3, 227, 227), as_strings=True, print_per_layer_stat=True,
+                                                 verbose=True)
+        logging.info('{:<30}  {:<8}'.format('Computational complexity: ', macs))
+        logging.info('{:<30}  {:<8}'.format('Number of parameters: ', params))
     # summary(models, input_size=(3, 227, 227), device='cpu')
 
+    logging.info('Model:')
+    logging.info(model)
+
+    layers_zero_grad_df = pd.DataFrame()
+    zero_grads_percentage_list = []
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             train_sampler.set_epoch(epoch)
@@ -302,7 +334,8 @@ def main_worker(gpu, ngpus_per_node, args):
         print('fred: Now is {}d-{}h-{}m-{}s'.format(localtime.tm_mday, localtime.tm_hour, localtime.tm_min,
                                                     localtime.tm_sec))
         # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch, args)
+        train(train_loader, model, criterion, optimizer, epoch, layers_zero_grad_df, zero_grads_percentage_list,
+              time_str, args)
 
         # step the scheduler
         if args.cos_annl_lr_scheduler:
@@ -321,12 +354,14 @@ def main_worker(gpu, ngpus_per_node, args):
                 'epoch': epoch + 1,
                 'arch': args.arch,
                 'state_dict': model.state_dict(),
-                'best_acc1': best_acc1,
+                'best_acc1': best_acc1,  # the epoch might not be best epoch, with the best_acc1 stored, the model_best
+                # pth.tar won't be updated unless it is the real best in this trial
                 'optimizer': optimizer.state_dict(),
-            }, is_best, foldername=args.folder_name)
+            }, is_best, arch=args.arch, foldername=args.folder_name)
 
 
-def train(train_loader, model, criterion, optimizer, epoch, args):
+def train(train_loader, model, criterion, optimizer, epoch, layers_zero_grad_df, zero_grads_percentage_list,
+          time_str, args):
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
@@ -373,6 +408,20 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         if i % args.print_freq == 0:
             progress.display(i)
 
+    # Dumping csv for zero_grad of each layer
+    if args.zero_grad_mea:
+        curr_zero_grads, num_grads, layers_zero_grad_list = num_zero_error_grad(model.module)
+        layers_zero_grad_df = layers_zero_grad_df.append(pd.Series(layers_zero_grad_list), ignore_index=True)
+        # since we use trial start time here, the trial number no need to include
+        logging.info("Number of zero_grads ({}/{})={:.2%}".format(curr_zero_grads, num_grads,
+                                                                  curr_zero_grads / num_grads))
+        layers_zero_grad_df.to_csv(
+            './logging/zerograd_' + time_str + '_' + args.arch +
+            '_prune_' + args.prune_rate + '_' + format(args.lr, '.0e') + '.csv')
+        # print("Non zero indices is {}".format(non_zero_indices))
+        grad_per = 100. * curr_zero_grads / num_grads
+        zero_grads_percentage_list.append(np.around(grad_per, 2))
+
 
 def validate(val_loader, model, criterion, args):
     batch_time = AverageMeter('Time', ':6.3f')
@@ -413,18 +462,18 @@ def validate(val_loader, model, criterion, args):
                 progress.display(i)
 
         # TODO: this should also be done with the ProgressMeter
-        print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
+        logging.info(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
               .format(top1=top1, top5=top5))
 
     return top1.avg
 
 
-def save_checkpoint(state, is_best, foldername='./mrmh_bp_resnet18/checkpoint.pth.tar'):
-    filename = foldername + '/checkpoint.pth.tar'
+def save_checkpoint(state, is_best, arch, foldername='./mrmh_bp_resnet18/checkpoint.pth.tar'):
+    filename = foldername + '/' + arch + '_checkpoint.pth.tar'
     torch.save(state, filename)
     if is_best:
         # shutil.copyfile(filename, './mrmh_bp_resnet18/model_best.pth.tar')
-        shutil.copyfile(filename, foldername + '/model_best.pth.tar')
+        shutil.copyfile(filename, foldername + '/' + arch + '_model_best.pth.tar')
 
 
 class AverageMeter(object):
@@ -492,6 +541,82 @@ def accuracy(output, target, topk=(1,)):
             correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
+
+def num_zero_error_grad(model):
+    """
+    Return
+     * accumulated zero gradients for all layers in this epoch
+     * total gradients amount for all layers in this model
+     * a 1D list of zero_grad in this epoch, i.e., layer_zero_grad_list for different layers zero grad.
+    """
+    layers_zero_grad_list = []
+    if model is None:
+        return 0
+
+    accu_zeros, total, idx_layer = 0, 0, 0
+    if isinstance(model, ResNet):
+        for module in model.children():
+            for layer in module:
+                # for each layer
+                zero_grad, sum_g = 0, 0
+                if isinstance(layer, (StochasticGradPruneLinear, StochasticGradPruneConv2d)):  # for conv1 & fc6, comment this line to enable for noprune
+                    flat_g = layer.error_grad.cpu().numpy().flatten()
+                    zero_grad = np.sum(flat_g == 0)
+                    accu_zeros += zero_grad
+                    sum_g = len(flat_g)
+                    total += sum_g
+                    # non_zero_idices = np.where(flat_g != 0)
+
+                    # zero_grad of this layer write into df
+                    layers_zero_grad_list.append(zero_grad / sum_g)
+                    # print('testing: this layer is {}, with the idx {}'.format(layer, idx_layer))
+                elif isinstance(layer, BasicBlock):
+                    flat_g = layer.conv1.error_grad.cpu().numpy().flatten() + layer.conv2.error_grad.cpu().numpy().flatten()
+                    zero_grad = np.sum(flat_g == 0)
+                    accu_zeros += zero_grad
+                    sum_g = len(flat_g)
+                    total += sum_g
+                    # non_zero_idices = np.where(flat_g != 0)
+
+                    # zero_grad of this layer write into df
+                    layers_zero_grad_list.append(zero_grad / sum_g)
+                    # print('testing: this layer is {}, with the idx {}'.format(layer, idx_layer))
+                    if layer.shortcut:  # check if the sequential object shortcut is not empty
+                        zero_grad, sum_g = 0, 0
+                        flat_g = layer.shortcut[0].error_grad.cpu().numpy().flatten()
+                        zero_grad = np.sum(flat_g == 0)
+                        accu_zeros += zero_grad
+                        sum_g = len(flat_g)
+                        total += sum_g
+
+                        # zero_grad of this layer write into df
+                        layers_zero_grad_list.append(zero_grad / sum_g)
+                        # print('testing: this layer is {}, with the idx {}'.format(layer.shortcut, idx_layer))
+                        # idx_layer += 1
+    elif isinstance(model, AlexNet_SFA):
+        # todo it cannot be run yet, since the layers_zero_grad_list for alexnet, haven't been adapted
+        for module in model.children():
+            # for those modules not in the nn.sequential, for alexnetfa & alexnetsfa, wont in
+            if isinstance(module, (StochasticGradPruneConv2d, StochasticGradPruneLinear)):
+                flat_g = module.error_grad.cpu().numpy().flatten()
+                accu_zeros += np.sum(flat_g == 0)
+                total += len(flat_g)
+                # non_zero_indices_list = np.where(flat_g != 0)  # this is to report where the indices are for non0 element
+            elif isinstance(module, nn.Sequential):
+                for layer in module:
+                    # for layer in bblock:
+                    if isinstance(layer, (StochasticGradPruneConv2d, StochasticGradPruneLinear)):
+                        # print('yes')
+                        flat_g = layer.error_grad.cpu().numpy().flatten()
+                        accu_zeros += np.sum(flat_g == 0)
+                        total += len(flat_g)
+                        # non_zero_indices_list = np.where(flat_g != 0)
+    else:
+        raise ValueError('The error grad measurement supports resnet & alexnet for now')
+
+    # print('end this epoch, the df is {}'.format(layers_zero_grad_df))
+
+    return int(accu_zeros), int(total), layers_zero_grad_list
 
 
 if __name__ == '__main__':
